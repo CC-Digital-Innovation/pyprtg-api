@@ -1,0 +1,12 @@
+[project]
+name = "pyprtg-api"
+version = "0.0.3"
+authors = [
+    {name="Jonny Le", email="jonny.le@computacenter.com"},
+]
+description = "API to communicate with PRTG instance."
+dependencies = [
+    "requests",
+]
+readme = "README.md"
+license = {text="MIT"}
