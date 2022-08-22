@@ -21,8 +21,8 @@ class PrtgApi:
             Defaults to None.
         template_device (int, optional): id of device object to use for 
             cloning. Defaults to None.
-        passhash (bool, optional): specify if using passhash or password. 
-            Defaults to True.
+        is_passhash (bool, optional): specify if using passhash or password. 
+            Defaults to False.
     """
     id_pattern = re.compile('(?<=(\?|&)id=)\d+')
 
@@ -32,13 +32,13 @@ class PrtgApi:
             password, 
             template_group = None, 
             template_device = None, 
-            passhash = True):
+            is_passhash = False):
         self.url = url
         self.username = username
         self.password = password
         self.template_group = template_group
         self.template_device = template_device
-        self.passhash = passhash
+        self.is_passhash = is_passhash
         self._validate_cred()
     
     def _requests_get(self, endpoint, params=None):
@@ -58,7 +58,7 @@ class PrtgApi:
             requests.Resposne: response of GET API
         """
         url = self.url + endpoint
-        key = 'passhash' if self.passhash else 'password'
+        key = 'passhash' if self.is_passhash else 'password'
         auth = {'username': self.username, key: self.password}
         if params:
             auth.update(params)
@@ -104,6 +104,25 @@ class PrtgApi:
             str: URL of device
         """
         return f'{self.url}/device.htm?id={id}'
+
+    # Sensortree
+
+    def get_sensortree(self, group_id=None):
+        """Get sensortree
+
+        Args:
+            group_id (Union[int, str], optional): Group id of desired root. Defaults to None.
+
+        Returns:
+            str: XML structure of sensortree
+        """
+        endpoint = '/api/table.xml'
+        params = {
+            'content': 'sensortree',
+            'id': group_id
+        }
+        response = self._requests_get(endpoint, params)
+        return response.text
 
     # Probes
 
@@ -221,7 +240,8 @@ class PrtgApi:
         Returns:
             dict: group details
         """
-        params = {'filter_name': name}
+        # PRTG filter not capturing some names without '@sub()'
+        params = {'filter_name': f'@sub({name})'}
         result = self._get_groups_base(params)
         if len(result) > 1:
             raise DuplicateObject('Multiple groups with same name.')
@@ -305,12 +325,20 @@ class PrtgApi:
             group_id (Union[int, str]): id of parent group
 
         Returns:
-            list[dict]: all devices and their details
+            list[dict]: devices and their details
         """
         params = {'id': group_id}
         return self._get_devices_base(params)
 
     def get_devices_by_name_containing(self, name):
+        """Get devices by partial or full name
+
+        Args:
+            name (str): partial or full name
+
+        Returns:
+            list[dict]: devices and their details
+        """
         params = {'filter_name': f'@sub({name})'}
         return self._get_devices_base(params)
 
@@ -419,6 +447,28 @@ class PrtgApi:
         tree = ET.fromstring(response.content)
         return tree.find('result').text
 
+    def get_hostname(self, id):
+        """Get hostname of object
+
+        Args:
+            id (Union[int, str]): id of object
+
+        Returns:
+            str: hostname of object
+        """
+        return self._get_obj_property_base(id, 'host')
+
+    def get_service_url(self, id):
+        """Get service URL of object
+
+        Args:
+            id (Union[int, str]): id of object
+
+        Returns:
+            str: service URL of object
+        """
+        return self._get_obj_property_base(id, 'serviceurl')
+
     def _set_obj_property_base(self, id, name, value):
         """Base function for setting object properties
 
@@ -499,7 +549,99 @@ class PrtgApi:
         """
         self._set_obj_property_base(id, 'locationgroup_', 1)
 
+    # Sensors
+
+    def _get_sensors_base(self, extra=None):
+        """Base function for returning sensors
+
+        Args:
+            extra (dict): additional parameters to filter sensors. Defaults to 
+                None.
+
+        Returns:
+            list[dict]: sensors and their details
+        """
+        endpoint = '/api/table.json'
+        params = {
+            'content': 'sensors',
+            'columns': 'objid,probe,group,device,status,priority,active,name'
+        }
+        if extra:
+            params.update(extra)
+        response = self._requests_get(endpoint, params)
+        return response.json()['sensors']
+        
+    def get_sensors_by_name(self, name, group=None, device=None):
+        """Get sensors by name
+
+        Args:
+            name (str): name of sensor
+            group (str, optional): name of group to filter by. Defaults to None.
+            device (str, optional): name of device to filter by. Defaults to None.
+
+        Returns:
+            list[dict]: sensors and their details
+        """
+        params = {
+            'filter_name': name,
+            'filter_device': device
+        }
+        if group:
+            params['filter_group']= f'@sub({group})'
+        return self._get_sensors_base(params)
+
+    def get_sensors_by_name_containing(self, name, group=None, device=None):
+        """Get sensors by partial or full name
+
+        Args:
+            name (str): partial or full name of sensor
+            group (str, optional): name of group to filter by. Defaults to None.
+            device (str, optional): name of device to filter by. Defaults to None.
+
+        Returns:
+            list[dict]: sensors and their details
+        """
+        params = {
+            'filter_name': f'@sub({name})',
+            'filter_device': device
+        }
+        if group:
+            params['filter_group']= f'@sub({group})'
+        return self._get_sensors_base(params)
+
+    def get_sensor(self, id):
+        """Get one sensor by id
+
+        Args:
+            id (Union[int, str]): id of sensor
+
+        Raises:
+            ObjectNotFound: when no sensor is found
+
+        Returns:
+            dict: sensor details
+        """
+        params = {'filter_objid': id}
+        try:
+            return self._get_sensors_base(params)[0]
+        except IndexError:
+            raise ObjectNotFound('No sensor with matching ID.')
+
     # Actions
+
+    def move_object(self, id, group_id):
+        """Move object to new group
+
+        Args:
+            id (Union[int, str]): id of object
+            group_id (Union[int, str]): id of target group
+        """
+        endpoint = '/moveobjectnow.htm'
+        params = {
+            'id': id,
+            'targetid': group_id
+        }
+        self._requests_get(endpoint, params)
 
     def pause_object(self, id):
         """Pause object
