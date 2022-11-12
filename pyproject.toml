@@ -1,12 +1,19 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pyprtg-api"
-version = "0.0.8"
+version = "0.0.9"
 authors = [
     {name="Jonny Le", email="jonny.le@computacenter.com"},
 ]
 description = "API to communicate with PRTG instance."
 dependencies = [
-    "requests",
+    "requests"
 ]
 readme = "README.md"
 license = {text="MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3"
+]
