@@ -4,7 +4,6 @@ import xml.etree.ElementTree as ET
 
 import requests
 
-from prtg.icon import Icon
 from prtg.exception import DuplicateObject, ObjectNotFound, Unauthorized
 
 class PrtgApi:
@@ -32,13 +31,15 @@ class PrtgApi:
             password, 
             template_group = None, 
             template_device = None, 
-            is_passhash = False):
+            is_passhash = False,
+            requests_verify = True):
         self.url = url
         self.username = username
         self.password = password
         self.template_group = template_group
         self.template_device = template_device
         self.is_passhash = is_passhash
+        self.requests_verify = requests_verify
         self._validate_cred()
     
     def _requests_get(self, endpoint, params=None):
@@ -62,7 +63,7 @@ class PrtgApi:
         auth = {'username': self.username, key: self.password}
         if params:
             auth.update(params)
-        response = requests.get(url, auth)
+        response = requests.get(url, auth, verify=self.requests_verify)
         try:
             response.raise_for_status()
         except requests.HTTPError as e:
