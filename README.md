@@ -18,7 +18,7 @@ Module to make it easier to communicate with PRTG instances. This module leverag
 
 
 * Python 3
-    * _Tested with version 3.8.7. Some older versions will probably work but has not been extensively tested._
+    * _Tested with version 3.9.13. Some older versions will probably work but has not been extensively tested._
 
 ### Installation
 
