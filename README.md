@@ -23,7 +23,7 @@ Module to make it easier to communicate with PRTG instances. This module leverag
 ### Installation
 
 ```bash
-pip install prtg-api
+pip install pyprtg-api
 ```
 
 ### Usage
