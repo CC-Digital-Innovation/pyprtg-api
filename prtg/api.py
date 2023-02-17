@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 
 import requests
 
+from prtg.icon import Icon
 from prtg.exception import DuplicateObject, ObjectNotFound, Unauthorized
 
 class PrtgApi:
@@ -16,10 +17,6 @@ class PrtgApi:
         url (str): instance of PRTG
         username (str): username credential needed for API
         password (str): password (or pashash) credential needed for API
-        template_group (int, optional): id of group object to use for cloning. 
-            Defaults to None.
-        template_device (int, optional): id of device object to use for 
-            cloning. Defaults to None.
         is_passhash (bool, optional): specify if using passhash or password. 
             Defaults to False.
     """
@@ -29,20 +26,16 @@ class PrtgApi:
             url, 
             username, 
             password, 
-            template_group = None, 
-            template_device = None, 
             is_passhash = False,
             requests_verify = True):
         self.url = url
         self.username = username
         self.password = password
-        self.template_group = template_group
-        self.template_device = template_device
         self.is_passhash = is_passhash
         self.requests_verify = requests_verify
         self._validate_cred()
     
-    def _requests_get(self, endpoint, params=None):
+    def _requests_get(self, endpoint, params={}):
         """Wraps function `requests.get` to add credentials
         to parameter and capture specific response error codes.
 
@@ -61,8 +54,8 @@ class PrtgApi:
         url = self.url + endpoint
         key = 'passhash' if self.is_passhash else 'password'
         auth = {'username': self.username, key: self.password}
-        if params:
-            auth.update(params)
+        # attach additional parameters
+        auth.update(params)
         response = requests.get(url, auth, verify=self.requests_verify)
         try:
             response.raise_for_status()
@@ -76,6 +69,26 @@ class PrtgApi:
             elif response.status_code == 404:
                 raise requests.HTTPError('Content not found.')
             raise requests.HTTPError(e)
+        return response
+
+    def _requests_post(self, endpoint, params={}, data={}):
+        """Wraps function `requests.post` to add credentials
+        to parameter and capture specific response error codes.
+
+        Args:
+            endpoint (str): API endpoint (not including base url)
+            params (dict, optional): any additional params. Defaults to None.
+            data (dict, optional): form-encoded data to send. Defaults to None.
+
+        Returns:
+            requests.Resposne: response of POST API
+        """
+        url = self.url + endpoint
+        key = 'passhash' if self.is_passhash else 'password'
+        auth = {'username': self.username, key: self.password}
+        auth.update(params)
+        response = requests.post(url, data, params=auth, verify=self.requests_verify)
+        response.raise_for_status()
         return response
 
     def _validate_cred(self):
@@ -228,8 +241,22 @@ class PrtgApi:
         """
         return self._get_groups_base()
 
+    def get_groups_by_name_containing(self, name):
+        """Get groups by name
+
+        Args:
+            name (str): name of group
+
+        Returns:
+            list[dict]: list of groups and their details
+        """
+        params = {'filter_name': f'@sub({name})'}
+        return self._get_groups_base(params)
+
     def get_group_by_name(self, name):
-        """Get one group by name
+        """Get one group by name. *Note currently having issues with retrieving 
+        names containing '[]', consider using get_groups_by_name_containing() 
+        instead
 
         Args:
             name (str): name of group
@@ -241,8 +268,7 @@ class PrtgApi:
         Returns:
             dict: group details
         """
-        # PRTG filter not capturing some names without '@sub()'
-        params = {'filter_name': f'@sub({name})'}
+        params = {'filter_name': name}
         result = self._get_groups_base(params)
         if len(result) > 1:
             raise DuplicateObject('Multiple groups with same name.')
@@ -270,7 +296,42 @@ class PrtgApi:
             raise ObjectNotFound('No group with matching ID.')
 
     def add_group(self, name, group_id):
-        """Add new group
+        """Add new group. For simpliciy, this function is limited in 
+        customizing the group. Use set property functions to edit other 
+        properties. *This is not officially a part of the API so there will be 
+        some uniqueness. 
+
+        Args:
+            name (str): name of new group
+            group_id (Union[int, str]): id of parent group
+
+        Returns:
+            dict: group details
+            None: failed to create group
+        """
+        # get duplicate groups first to differentiate later
+        duplicate_groups = self.get_groups_by_name_containing(name)
+
+        endpoint = '/addgroup2.htm'
+        data = {
+            'id': group_id,
+            'name_': name
+        }
+        
+        # unsupported API so no proper response to catch
+        self._requests_post(endpoint, data=data)
+        
+        # find difference to get group
+        groups = self.get_groups_by_name_containing(name)
+        group = [x for x in groups if x not in duplicate_groups]
+        try:
+            return group[0]
+        except IndexError:
+            # failed to create group
+            return None
+
+    def clone_group(self, name, group_id, clone_id):
+        """Clone new group
 
         Args:
             name (str): name of new group
@@ -281,7 +342,7 @@ class PrtgApi:
         """
         endpoint = '/api/duplicateobject.htm'
         params = {
-            'id': self.template_group,
+            'id': clone_id,
             'name': name,
             'targetid': group_id
         }
@@ -290,7 +351,7 @@ class PrtgApi:
 
     # Devices
 
-    def _get_devices_base(self, extra=None):
+    def _get_devices_base(self, extra={}):
         """Base function for returning devices
 
         Args:
@@ -306,8 +367,7 @@ class PrtgApi:
             'columns': 'objid,name,active,status,probe,group,host,\
                         priority,tags,location,parentid,icon'
         }
-        if extra:
-            params.update(extra)
+        params.update(extra)
         response = self._requests_get(endpoint, params)
         return response.json()['devices']
 
@@ -383,8 +443,43 @@ class PrtgApi:
         except IndexError:
             raise ObjectNotFound('No device with matching ID.')
 
-    def add_device(self, name, host, group_id):
-        """Add new device
+    def add_device(self, name, host, group_id, icon=Icon.SERVER):
+        """Add new device. For simpliciy, this function is limited in 
+        customizing the device. Use set property functions to edit other 
+        properties. *This is not officially a part of the API so there will be 
+        some uniqueness. 
+
+        Args:
+            name (str): name of new device
+            host (str): hostname or IP address of device
+            group_id (Union[int, str]): id of parent group
+            icon (Icon): icon of device
+        """
+        # get duplicate devices first to differentiate later
+        duplicate_devices = self.get_devices_by_name_containing(name)
+
+        endpoint = '/adddevice2.htm'
+        data = {
+            'id': group_id,
+            'name_': name,
+            'host_': host,
+            'deviceicon_': icon.value
+        }
+
+        # unsupported API so no proper response to catch
+        self._requests_post(endpoint, data=data)
+        
+        # find difference to get device
+        devices = self.get_devices_by_name_containing(name)
+        device = [x for x in devices if x not in duplicate_devices]
+        try:
+            return device[0]
+        except IndexError:
+            # failed to create device
+            return None
+
+    def clone_device(self, name, host, group_id, clone_id):
+        """Clone new device
 
         Args:
             name (str): name of new device
@@ -396,7 +491,7 @@ class PrtgApi:
         """
         endpoint = '/api/duplicateobject.htm'
         params = {
-            'id': self.template_device,
+            'id': clone_id,
             'name': name,
             'host': host,
             'targetid': group_id
