@@ -5,89 +5,93 @@ import xml.etree.ElementTree as ET
 import requests
 
 from prtg.icon import Icon
-from prtg.exception import DuplicateObject, ObjectNotFound, Unauthorized
+from prtg.exception import DuplicateObject, ObjectNotFound
 
 class PrtgApi:
-    """Class to communicate with PRTG instance using PRTG API.
-    Validates credentials on __init__.
+    """Class to communicate with PRTG instance using PRTG API. 
+    Validates credentials on __init__. Credentials require one of (1) 
+    api_token, (2) username and passhash, or (3) username and password.
 
     Attributes:
         id_pattern (re.Pattern): (class attribute) regex pattern to find object 
             ID from response URL
         url (str): instance of PRTG
-        username (str): username credential needed for API
-        password (str): password (or pashash) credential needed for API
-        is_passhash (bool, optional): specify if using passhash or password. 
-            Defaults to False.
+        api_token (str): API token credential needed for API. API token is 
+            prioritized if username and passhash or password is passed. 
+            Defaults to ''.
+        username (str): username credential needed for API. Defaults to ''.
+        passhash (str): passhash credential needed for API. Passhash is 
+            prioritized if password is also passed. Defaults to ''.
+        password (str): password credential needed for API. Passhash is 
+            prioritized if passhash is also passed. Defaults to ''.
+        
     """
     id_pattern = re.compile('(?<=(\?|&)id=)\d+')
 
     def __init__(self, 
             url, 
-            username, 
-            password, 
-            is_passhash = False,
+            api_token = '',
+            username = '', 
+            passhash = '',
+            password = '', 
             requests_verify = True):
         self.url = url
-        self.username = username
-        self.password = password
-        self.is_passhash = is_passhash
         self.requests_verify = requests_verify
+        self._session = requests.Session()
+        if api_token:
+            self._session.params['apitoken'] = api_token
+        elif username and passhash:
+            self._session.params['username'] = username
+            self._session.params['passhash'] = passhash
+        elif username and password:
+            self._session.params['username'] = username
+            self._session.params['password'] = password
+        else:
+            raise TypeError('Missing authentication, include one of: (1) api_token, (2) username and passhash, or (3) username and password.')
         self._validate_cred()
     
     def _requests_get(self, endpoint, params={}):
-        """Wraps function `requests.get` to add credentials
-        to parameter and capture specific response error codes.
+        """Wraps function `requests.get` to add parameters and capture specific 
+        response error codes.
 
         Args:
             endpoint (str): API endpoint (not including base url)
-            params (dict, optional): any additional params. Defaults to None.
+            params (dict, optional): any additional params. Defaults to {}.
 
         Raises:
-            Unauthorized: when lacking or having invalid credentials
-            requests.HTTPError: when client or server side errors. Re-prints 
-            error status codes 400 and 404 for clarity
+            requests.HTTPError: depending on the error
 
         Returns:
             requests.Resposne: response of GET API
         """
         url = self.url + endpoint
-        key = 'passhash' if self.is_passhash else 'password'
-        auth = {'username': self.username, key: self.password}
-        # attach additional parameters
-        auth.update(params)
-        response = requests.get(url, auth, verify=self.requests_verify)
+        response = self._session.get(url, params=params, verify=self.requests_verify)
         try:
             response.raise_for_status()
         except requests.HTTPError as e:
+            # catch unique XML error resposne
             if response.status_code == 400:
                 root = ET.fromstring(response.text)
                 error_msg = root.find('error').text
                 raise requests.HTTPError(error_msg)
-            elif response.status_code == 401:
-                raise Unauthorized('Authentication failed for PRTG API.')
-            elif response.status_code == 404:
-                raise requests.HTTPError('Content not found.')
-            raise requests.HTTPError(e)
+            # otherwise, re-raise HTTPError
+            raise e
         return response
 
     def _requests_post(self, endpoint, params={}, data={}):
-        """Wraps function `requests.post` to add credentials
-        to parameter and capture specific response error codes.
+        """Wraps function `requests.post` to add parameters, data, and capture  
+        response error codes.
 
         Args:
             endpoint (str): API endpoint (not including base url)
-            params (dict, optional): any additional params. Defaults to None.
-            data (dict, optional): form-encoded data to send. Defaults to None.
+            params (dict, optional): any additional params. Defaults to {}.
+            data (dict, optional): form-encoded data to send. Defaults to {}.
 
         Returns:
             requests.Resposne: response of POST API
         """
         url = self.url + endpoint
-        key = 'passhash' if self.is_passhash else 'password'
-        auth = {'username': self.username, key: self.password}
-        auth.update(params)
-        response = requests.post(url, data, params=auth, verify=self.requests_verify)
+        response = self._session.post(url, data, params=params, verify=self.requests_verify)
         response.raise_for_status()
         return response
 
@@ -125,7 +129,8 @@ class PrtgApi:
         """Get sensortree
 
         Args:
-            group_id (Union[int, str], optional): Group id of desired root. Defaults to None.
+            group_id (Union[int, str], optional): Group id of desired root. 
+                Defaults to None.
 
         Returns:
             str: XML structure of sensortree
@@ -673,7 +678,8 @@ class PrtgApi:
         Args:
             name (str): name of sensor
             group (str, optional): name of group to filter by. Defaults to None.
-            device (str, optional): name of device to filter by. Defaults to None.
+            device (str, optional): name of device to filter by. Defaults to 
+                None.
 
         Returns:
             list[dict]: sensors and their details
@@ -692,7 +698,8 @@ class PrtgApi:
         Args:
             name (str): partial or full name of sensor
             group (str, optional): name of group to filter by. Defaults to None.
-            device (str, optional): name of device to filter by. Defaults to None.
+            device (str, optional): name of device to filter by. Defaults to 
+                None.
 
         Returns:
             list[dict]: sensors and their details
