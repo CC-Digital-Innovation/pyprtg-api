@@ -7,7 +7,7 @@ import requests
 from prtg.icon import Icon
 from prtg.exception import DuplicateObject, ObjectNotFound
 
-class PrtgApi:
+class ApiClient:
     """Class to communicate with PRTG instance using PRTG API. 
     Validates credentials on __init__. Credentials require one of (1) 
     api_token, (2) username and passhash, or (3) username and password.
@@ -16,39 +16,21 @@ class PrtgApi:
         id_pattern (re.Pattern): (class attribute) regex pattern to find object 
             ID from response URL
         url (str): instance of PRTG
-        api_token (str): API token credential needed for API. API token is 
-            prioritized if username and passhash or password is passed. 
-            Defaults to ''.
-        username (str): username credential needed for API. Defaults to ''.
-        passhash (str): passhash credential needed for API. Passhash is 
-            prioritized if password is also passed. Defaults to ''.
-        password (str): password credential needed for API. Passhash is 
-            prioritized if passhash is also passed. Defaults to ''.
-        
+        auth: see auth.py for classes, for authentication
+        requests_verify (bool | str): verify PRTG SSL certificate, str for path of CA_BUNDLE or False to ignore
     """
     id_pattern = re.compile('(?<=(\?|&)id=)\d+')
 
     def __init__(self, 
             url, 
-            api_token = '',
-            username = '', 
-            passhash = '',
-            password = '', 
+            auth = None,
             requests_verify = True):
         self.url = url
         self.requests_verify = requests_verify
         self._session = requests.Session()
-        if api_token:
-            self._session.params['apitoken'] = api_token
-        elif username and passhash:
-            self._session.params['username'] = username
-            self._session.params['passhash'] = passhash
-        elif username and password:
-            self._session.params['username'] = username
-            self._session.params['password'] = password
-        else:
-            raise TypeError('Missing authentication, include one of: (1) api_token, (2) username and passhash, or (3) username and password.')
-        self._validate_cred()
+        if auth:
+            auth.authenticate(self._session)
+            self._validate_cred()
     
     def _requests_get(self, endpoint, params={}):
         """Wraps function `requests.get` to add parameters and capture specific 
@@ -100,7 +82,8 @@ class PrtgApi:
         """  
         self._requests_get('/api/healthstatus.json')
 
-    def _parse_obj_id(self, url):
+    @classmethod
+    def _parse_obj_id(cls, url):
         """Helper function to extract ID from response URL
 
         Args:
@@ -109,7 +92,7 @@ class PrtgApi:
         Returns:
             int: id of object
         """
-        return int(PrtgApi.id_pattern.search(urllib.parse.unquote(url), re.I).
+        return int(cls.id_pattern.search(urllib.parse.unquote(url), re.I).
         group(0))
 
     def device_url(self, id):
