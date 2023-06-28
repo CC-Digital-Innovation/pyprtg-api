@@ -1,4 +1,4 @@
-class UserPassword:
+class BasicPassword:
     def __init__(self, username, password):
         self.username = username
         self.password = password
@@ -6,15 +6,15 @@ class UserPassword:
     def authenticate(self, session):
         session.params.update({'username': self.username, 'password': self.password})
 
-class UserPasshash:
+class BasicPasshash:
     def __init__(self, username, passhash):
         self.username = username
         self.passhash = passhash
 
     def authenticate(self, session):
-        session.params.update({'username': self.username, 'password': self.password})
+        session.params.update({'username': self.username, 'passhash': self.passhash})
 
-class ApiToken:
+class BasicToken:
     def __init__(self, api_token):
         self.api_token = api_token
 
