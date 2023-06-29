@@ -1,8 +1,11 @@
+import functools
 import re
+import time
 import urllib.parse
 import xml.etree.ElementTree as ET
 
 import requests
+from requests.adapters import HTTPAdapter, Retry
 
 from prtg.icon import Icon
 from prtg.exception import DuplicateObject, ObjectNotFound
@@ -17,6 +20,9 @@ class ApiClient:
             ID from response URL
         url (str): instance of PRTG
         auth: see auth.py for classes, for authentication
+        retries (int): number of times to retry
+        timeout (int): number of seconds to wait for request
+        wait (int): number of seconds to wait for object creation
         requests_verify (bool | str): verify PRTG SSL certificate, str for path of CA_BUNDLE or False to ignore
     """
     id_pattern = re.compile('(?<=(\?|&)id=)\d+')
@@ -24,10 +30,18 @@ class ApiClient:
     def __init__(self, 
             url, 
             auth = None,
+            retries = 10,
+            timeout = 10,
+            wait = 5,
             requests_verify = True):
         self.url = url
         self.requests_verify = requests_verify
+        self.wait = wait
         self._session = requests.Session()
+        retry = Retry(total=retries, backoff_factor=1)
+        self._session.mount('https://', HTTPAdapter(max_retries=retry))
+        self._session.mount('http://', HTTPAdapter(max_retries=retry))
+        self._session.request = functools.partial(self._session.request, timeout=timeout)
         if auth:
             auth.authenticate(self._session)
             self._validate_cred()
@@ -311,12 +325,13 @@ class ApiClient:
         
         # find difference to get group
         groups = self.get_groups_by_name_containing(name)
-        group = [x for x in groups if x not in duplicate_groups]
         try:
-            return group[0]
-        except IndexError:
+            group = next(x for x in groups if x not in duplicate_groups)
+        except StopIteration:
             # failed to create group
             return None
+        time.sleep(self.wait)
+        return group
 
     def clone_group(self, name, group_id, clone_id):
         """Clone new group
@@ -459,12 +474,13 @@ class ApiClient:
         
         # find difference to get device
         devices = self.get_devices_by_name_containing(name)
-        device = [x for x in devices if x not in duplicate_devices]
         try:
-            return device[0]
-        except IndexError:
+            device = next(x for x in devices if x not in duplicate_devices)
+        except StopIteration:
             # failed to create device
             return None
+        time.sleep(self.wait)
+        return device
 
     def clone_device(self, name, host, group_id, clone_id):
         """Clone new device
