@@ -1,10 +1,13 @@
 import functools
 import re
-import time
 import urllib.parse
 import xml.etree.ElementTree as ET
+from ipaddress import IPv4Address
+from typing import Dict, List, Union
 
 import requests
+from requests.auth import AuthBase
+from tenacity import Retrying, RetryError, retry_if_exception_type, wait_random_exponential, stop_after_delay
 from requests.adapters import HTTPAdapter, Retry
 
 from prtg.icon import Icon
@@ -28,31 +31,27 @@ class ApiClient:
     id_pattern = re.compile('(?<=(\?|&)id=)\d+')
 
     def __init__(self, 
-            url, 
-            auth = None,
-            retries = 10,
-            timeout = 10,
-            wait = 5,
-            requests_verify = True):
-        self.url = url
+            url: str, 
+            auth: AuthBase = None,
+            retries: int = 10,
+            timeout: int = 60,
+            requests_verify: bool = True):
+        self.url = url.rstrip('/')
         self.requests_verify = requests_verify
-        self.wait = wait
         self._session = requests.Session()
+        self._session.auth = auth
         retry = Retry(total=retries, backoff_factor=1)
         self._session.mount('https://', HTTPAdapter(max_retries=retry))
         self._session.mount('http://', HTTPAdapter(max_retries=retry))
         self._session.request = functools.partial(self._session.request, timeout=timeout)
-        if auth:
-            auth.authenticate(self._session)
-            self._validate_cred()
     
-    def _requests_get(self, endpoint, params={}):
+    def _requests_get(self, endpoint, params = None):
         """Wraps function `requests.get` to add parameters and capture specific 
         response error codes.
 
         Args:
             endpoint (str): API endpoint (not including base url)
-            params (dict, optional): any additional params. Defaults to {}.
+            params (dict, optional): any additional params. Defaults to None.
 
         Raises:
             requests.HTTPError: depending on the error
@@ -74,7 +73,7 @@ class ApiClient:
             raise e
         return response
 
-    def _requests_post(self, endpoint, params={}, data={}):
+    def _requests_post(self, endpoint, params = None, data = None):
         """Wraps function `requests.post` to add parameters, data, and capture  
         response error codes.
 
@@ -109,7 +108,7 @@ class ApiClient:
         return int(cls.id_pattern.search(urllib.parse.unquote(url), re.I).
         group(0))
 
-    def device_url(self, id):
+    def device_url(self, id: Union[int, str]) -> str:
         """Creates URL of device.
 
         Args:
@@ -122,7 +121,7 @@ class ApiClient:
 
     # Sensortree
 
-    def get_sensortree(self, group_id=None):
+    def get_sensortree(self, group_id: Union[int, str, None] = None) -> str:
         """Get sensortree
 
         Args:
@@ -142,7 +141,7 @@ class ApiClient:
 
     # Probes
 
-    def _get_probes_base(self, extra=None):
+    def _get_probes_base(self, extra = None):
         """Base function for returning probes
 
         Args:
@@ -164,7 +163,7 @@ class ApiClient:
         response = self._requests_get(endpoint, params)
         return response.json()['probes']
 
-    def get_all_probes(self):
+    def get_all_probes(self) -> List[Dict]:
         """Get all probes
 
         Returns:
@@ -172,7 +171,7 @@ class ApiClient:
         """
         return self._get_probes_base()
 
-    def get_probe_by_name(self, name):
+    def get_probe_by_name(self, name: str) -> Dict:
         """Get one probe by name
 
         Args:
@@ -194,7 +193,7 @@ class ApiClient:
         except IndexError:
             raise ObjectNotFound('No probe with matching name.')
 
-    def get_probe(self, id):
+    def get_probe(self, id: Union[int, str]) -> Dict:
         """Get one probe by id
 
         Args:
@@ -235,7 +234,7 @@ class ApiClient:
         response = self._requests_get(endpoint, params)
         return response.json()['groups']
 
-    def get_all_groups(self):
+    def get_all_groups(self) -> List[Dict]:
         """Get all groups
 
         Returns:
@@ -243,7 +242,7 @@ class ApiClient:
         """
         return self._get_groups_base()
 
-    def get_groups_by_name_containing(self, name):
+    def get_groups_by_name_containing(self, name: str) -> List[Dict]:
         """Get groups by name
 
         Args:
@@ -255,7 +254,7 @@ class ApiClient:
         params = {'filter_name': f'@sub({name})'}
         return self._get_groups_base(params)
 
-    def get_group_by_name(self, name):
+    def get_group_by_name(self, name: str) -> Dict:
         """Get one group by name. *Note currently having issues with retrieving 
         names containing '[]', consider using get_groups_by_name_containing() 
         instead
@@ -279,7 +278,7 @@ class ApiClient:
         except IndexError:
             raise ObjectNotFound('No group with matching name.')
 
-    def get_group(self, id):
+    def get_group(self, id: Union[int, str]) -> Dict:
         """Get one group by id
 
         Args:
@@ -297,7 +296,7 @@ class ApiClient:
         except IndexError:
             raise ObjectNotFound('No group with matching ID.')
 
-    def add_group(self, name, group_id):
+    def add_group(self, name: str, group_id: Union[int, str]) -> Dict:
         """Add new group. For simpliciy, this function is limited in 
         customizing the group. Use set property functions to edit other 
         properties. *This is not officially a part of the API so there will be 
@@ -307,9 +306,11 @@ class ApiClient:
             name (str): name of new group
             group_id (Union[int, str]): id of parent group
 
+        Raises:
+            ObjectNotFound: when group cannot be added
+
         Returns:
             dict: group details
-            None: failed to create group
         """
         # get duplicate groups first to differentiate later
         duplicate_groups = self.get_groups_by_name_containing(name)
@@ -324,21 +325,25 @@ class ApiClient:
         self._requests_post(endpoint, data=data)
         
         # find difference to get group
-        groups = self.get_groups_by_name_containing(name)
         try:
-            group = next(x for x in groups if x not in duplicate_groups)
-        except StopIteration:
+            for attempt in Retrying(retry=retry_if_exception_type(StopIteration),
+                                    stop=stop_after_delay(60),
+                                    wait=wait_random_exponential(min=1)):
+                with attempt:
+                    groups = self.get_groups_by_name_containing(name)
+                    group = next(x for x in groups if x not in duplicate_groups)
+        except RetryError:
             # failed to create group
-            return None
-        time.sleep(self.wait)
+            raise ObjectNotFound
         return group
 
-    def clone_group(self, name, group_id, clone_id):
+    def clone_group(self, name: str, group_id: Union[int, str], clone_id: Union[int, str]) -> str:
         """Clone new group
 
         Args:
             name (str): name of new group
             group_id (Union[int, str]): id of parent group
+            clone_id (Union[int, str]): id of group to clone from
 
         Returns:
             str: id of new group
@@ -374,7 +379,7 @@ class ApiClient:
         response = self._requests_get(endpoint, params)
         return response.json()['devices']
 
-    def get_all_devices(self):
+    def get_all_devices(self) -> List[Dict]:
         """Get all devices
 
         Returns:
@@ -382,7 +387,7 @@ class ApiClient:
         """
         return self._get_devices_base()
 
-    def get_devices_by_group_id(self, group_id):
+    def get_devices_by_group_id(self, group_id: Union[int, str]) -> List[Dict]:
         """Get devices by parent group
 
         Args:
@@ -394,7 +399,7 @@ class ApiClient:
         params = {'id': group_id}
         return self._get_devices_base(params)
 
-    def get_devices_by_name_containing(self, name):
+    def get_devices_by_name_containing(self, name: str) -> List[Dict]:
         """Get devices by partial or full name
 
         Args:
@@ -406,7 +411,7 @@ class ApiClient:
         params = {'filter_name': f'@sub({name})'}
         return self._get_devices_base(params)
 
-    def get_device_by_name(self, name):
+    def get_device_by_name(self, name: str) -> Dict:
         """Get one device by name
 
         Args:
@@ -428,7 +433,7 @@ class ApiClient:
         except IndexError:
             raise ObjectNotFound('No device with matching name.')
 
-    def get_device(self, id):
+    def get_device(self, id: Union[int, str]) -> Dict:
         """Get one device by id
 
         Args:
@@ -446,7 +451,7 @@ class ApiClient:
         except IndexError:
             raise ObjectNotFound('No device with matching ID.')
 
-    def add_device(self, name, host, group_id, icon=Icon.SERVER):
+    def add_device(self, name: str, host: Union[str, IPv4Address], group_id: Union[int, str], icon: Icon = Icon.SERVER) -> Dict:
         """Add new device. For simpliciy, this function is limited in 
         customizing the device. Use set property functions to edit other 
         properties. *This is not officially a part of the API so there will be 
@@ -456,7 +461,13 @@ class ApiClient:
             name (str): name of new device
             host (str): hostname or IP address of device
             group_id (Union[int, str]): id of parent group
-            icon (Icon): icon of device
+            icon (Icon): icon of device. Defaults to Icon.SERVER
+        
+        Raise:
+            ObjectNotFound: when device was not added
+
+        Returns:
+            dict: device details
         """
         # get duplicate devices first to differentiate later
         duplicate_devices = self.get_devices_by_name_containing(name)
@@ -465,7 +476,7 @@ class ApiClient:
         data = {
             'id': group_id,
             'name_': name,
-            'host_': host,
+            'host_': str(host),
             'deviceicon_': icon.value
         }
 
@@ -473,22 +484,26 @@ class ApiClient:
         self._requests_post(endpoint, data=data)
         
         # find difference to get device
-        devices = self.get_devices_by_name_containing(name)
         try:
-            device = next(x for x in devices if x not in duplicate_devices)
-        except StopIteration:
+            for attempt in Retrying(retry=retry_if_exception_type(StopIteration),
+                                    stop=stop_after_delay(60),
+                                    wait=wait_random_exponential(min=1)):
+                with attempt:
+                    devices = self.get_devices_by_name_containing(name)
+                    device = next(x for x in devices if x not in duplicate_devices)
+        except RetryError:
             # failed to create device
-            return None
-        time.sleep(self.wait)
+            raise ObjectNotFound
         return device
 
-    def clone_device(self, name, host, group_id, clone_id):
+    def clone_device(self, name: str, host: str, group_id: Union[int, str], clone_id: Union[int, str]) -> str:
         """Clone new device
 
         Args:
             name (str): name of new device
             host (str): hostname or IP address of device
             group_id (Union[int, str]): id of parent group
+            clone_id (Union[int, str]): id of group to clone from
 
         Returns:
             str: id of new device
@@ -547,7 +562,7 @@ class ApiClient:
         tree = ET.fromstring(response.content)
         return tree.find('result').text
 
-    def get_hostname(self, id):
+    def get_hostname(self, id: Union[int, str]) -> str:
         """Get hostname of object
 
         Args:
@@ -558,7 +573,7 @@ class ApiClient:
         """
         return self._get_obj_property_base(id, 'host')
 
-    def get_service_url(self, id):
+    def get_service_url(self, id: Union[int, str]) -> str:
         """Get service URL of object
 
         Args:
@@ -585,16 +600,16 @@ class ApiClient:
         }
         self._requests_get(endpoint, params)
 
-    def set_hostname(self, id, host):
+    def set_hostname(self, id: Union[int, str], host: Union[str, IPv4Address]):
         """Set hostname of object
 
         Args:
             id (Union[int, str]): id of object
             host (str): hostname or IP address
         """
-        self._set_obj_property_base(id, 'host', host)
+        self._set_obj_property_base(id, 'host', str(host))
 
-    def set_icon(self, id, icon):
+    def set_icon(self, id: Union[int, str], icon: Icon):
         """Set icon of object
 
         Args:
@@ -603,7 +618,7 @@ class ApiClient:
         """
         self._set_obj_property_base(id, 'deviceicon', icon.value)
 
-    def set_location(self, id, location):
+    def set_location(self, id: Union[int, str], location: str):
         """Set location of object
 
         Args:
@@ -612,7 +627,7 @@ class ApiClient:
         """
         self._set_obj_property_base(id, 'location', location)
 
-    def set_service_url(self, id, url):
+    def set_service_url(self, id: Union[int, str], url: str):
         """Set service URL of object
 
         Args:
@@ -621,7 +636,7 @@ class ApiClient:
         """
         self._set_obj_property_base(id, 'serviceurl', url)
 
-    def set_tags(self, id, tags):
+    def set_tags(self, id: Union[int, str], tags: List[str]):
         """Set new tags for object.
 
         Args:
@@ -633,7 +648,7 @@ class ApiClient:
         combined_tags = ' '.join([tag.replace(' ', '-') for tag in tags])
         self._set_obj_property_base(id, 'tags', combined_tags)
 
-    def set_inherit_location_off(self, id):
+    def set_inherit_location_off(self, id: Union[int, str]):
         """Turn off location inheritance setting of object
 
         Args:
@@ -641,7 +656,7 @@ class ApiClient:
         """
         self._set_obj_property_base(id, 'locationgroup_', 0)
 
-    def set_inherit_location_on(self, id):
+    def set_inherit_location_on(self, id: Union[int, str]):
         """Turn on location inheritance setting of object
 
         Args:
@@ -671,7 +686,7 @@ class ApiClient:
         response = self._requests_get(endpoint, params)
         return response.json()['sensors']
         
-    def get_sensors_by_name(self, name, group=None, device=None):
+    def get_sensors_by_name(self, name: str, group: Union[str, None] = None, device: Union[str, None] = None) -> List[Dict]:
         """Get sensors by name
 
         Args:
@@ -691,7 +706,7 @@ class ApiClient:
             params['filter_group']= f'@sub({group})'
         return self._get_sensors_base(params)
 
-    def get_sensors_by_name_containing(self, name, group=None, device=None):
+    def get_sensors_by_name_containing(self, name: str, group: Union[str, None] = None, device: Union[str, None] = None) -> List[Dict]:
         """Get sensors by partial or full name
 
         Args:
@@ -711,7 +726,7 @@ class ApiClient:
             params['filter_group']= f'@sub({group})'
         return self._get_sensors_base(params)
 
-    def get_sensor(self, id):
+    def get_sensor(self, id: Union[int, str]) -> Dict:
         """Get one sensor by id
 
         Args:
@@ -731,7 +746,7 @@ class ApiClient:
 
     # Actions
 
-    def move_object(self, id, group_id):
+    def move_object(self, id: Union[int, str], group_id: Union[int, str]):
         """Move object to new group
 
         Args:
@@ -745,7 +760,7 @@ class ApiClient:
         }
         self._requests_get(endpoint, params)
 
-    def pause_object(self, id):
+    def pause_object(self, id: Union[int, str]):
         """Pause object
 
         Args:
@@ -758,7 +773,7 @@ class ApiClient:
         }
         self._requests_get(endpoint, params)
 
-    def resume_object(self, id):
+    def resume_object(self, id: Union[int, str]):
         """Resume object
 
         Args:
@@ -771,7 +786,7 @@ class ApiClient:
         }
         self._requests_get(endpoint, params)
 
-    def delete_object(self, id):
+    def delete_object(self, id: Union[int, str]):
         """Delete object
 
         Args:
@@ -784,7 +799,7 @@ class ApiClient:
         }
         self._requests_get(endpoint, params)
 
-    def set_priority(self, id, value):
+    def set_priority(self, id: Union[int, str], value: Union[int, str]):
         """Set priority of object
 
         Args:
