@@ -29,11 +29,14 @@ pip install prtg-api
 ### Usage
 
 ```python
-from prtg.api import PrtgApi
+from prtg import ApiClient
+from prtg.auth import BasicPasshash
 
-prtg = PrtgApi('https://instance.com', 'admin', 'password', passhash=False)
-print(prtg.get_probe(1))
-# {'objid': 1, 'objid_raw': 1, 'name': 'Local Probe', 'name_raw': 'Local Probe', 'active': True, 'active_raw': -1, 'tags': '', 'tags_raw': '', 'parentid': 0, 'parentid_raw': 0, 'priority': '3', 'priority_raw': 3, 'status': 'Up', 'status_raw': 3, 'groupnum': '10', 'groupnum_raw': 10, 'devicenum': '6', 'devicenum_raw': 6, 'location': '', 'location_raw': ''}
+auth = BasicPasshash('username', 'passhash')
+client = ApiClient('https://prtg.instance.com', auth)
+
+print(client.get_probe(1))
+# {'objid': 1, 'objid_raw': 1, 'name': 'Probe Device', 'name_raw': 'Probe Device', 'active': True, 'active_raw': -1, 'tags': '', 'tags_raw': '', 'parentid': 0, 'parentid_raw': 0, 'priority': '3', 'priority_raw': 3, 'status': 'Up', 'status_raw': 3, 'groupnum': '7', 'groupnum_raw': 7, 'devicenum': '3', 'devicenum_raw': 3, 'location': '', 'location_raw': ''}
 ```
 
 ## TODOs
