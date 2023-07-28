@@ -1,4 +1,3 @@
-import functools
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -7,7 +6,7 @@ from typing import Dict, List, Union
 
 import requests
 from requests.auth import AuthBase
-from tenacity import Retrying, RetryError, retry_if_exception_type, wait_random_exponential, stop_after_delay
+from tenacity import Retrying, RetryError, retry_if_exception_type, wait_random_exponential, stop_after_delay, stop_never
 from requests.adapters import HTTPAdapter, Retry
 
 from prtg.icon import Icon
@@ -25,7 +24,7 @@ class ApiClient:
         auth: see auth.py for classes, for authentication
         retries (int): number of times to retry
         timeout (int): number of seconds to wait for request
-        wait (int): number of seconds to wait for object creation
+        backoff_factor (float): factor to extend the seconds of time delay between retries
         requests_verify (bool | str): verify PRTG SSL certificate, str for path of CA_BUNDLE or False to ignore
     """
     id_pattern = re.compile('(?<=(\?|&)id=)\d+')
@@ -33,17 +32,18 @@ class ApiClient:
     def __init__(self, 
             url: str, 
             auth: AuthBase = None,
-            retries: int = 10,
-            timeout: int = 60,
+            retries: int = 5,
+            timeout: int = None,
+            backoff_factor: float = 1,
             requests_verify: bool = True):
         self.url = url.rstrip('/')
         self.requests_verify = requests_verify
+        self.timeout = timeout
+        retry = Retry(total=retries, backoff_factor=backoff_factor, status_forcelist=[500, 502, 503, 504])
         self._session = requests.Session()
         self._session.auth = auth
-        retry = Retry(total=retries, backoff_factor=1)
-        self._session.mount('https://', HTTPAdapter(max_retries=retry))
         self._session.mount('http://', HTTPAdapter(max_retries=retry))
-        self._session.request = functools.partial(self._session.request, timeout=timeout)
+        self._session.mount('https://', HTTPAdapter(max_retries=retry))
     
     def _requests_get(self, endpoint, params = None):
         """Wraps function `requests.get` to add parameters and capture specific 
@@ -60,7 +60,7 @@ class ApiClient:
             requests.Resposne: response of GET API
         """
         url = self.url + endpoint
-        response = self._session.get(url, params=params, verify=self.requests_verify)
+        response = self._session.get(url, params=params, verify=self.requests_verify, timeout=self.timeout)
         try:
             response.raise_for_status()
         except requests.HTTPError as e:
@@ -86,7 +86,7 @@ class ApiClient:
             requests.Resposne: response of POST API
         """
         url = self.url + endpoint
-        response = self._session.post(url, data, params=params, verify=self.requests_verify)
+        response = self._session.post(url, data, params=params, verify=self.requests_verify, timeout=self.timeout)
         response.raise_for_status()
         return response
 
@@ -327,8 +327,8 @@ class ApiClient:
         # find difference to get group
         try:
             for attempt in Retrying(retry=retry_if_exception_type(StopIteration),
-                                    stop=stop_after_delay(60),
-                                    wait=wait_random_exponential(min=1)):
+                                    stop=stop_after_delay(self.timeout) if self.timeout else stop_never,
+                                    wait=wait_random_exponential()):
                 with attempt:
                     groups = self.get_groups_by_name_containing(name)
                     group = next(x for x in groups if x not in duplicate_groups)
@@ -486,8 +486,8 @@ class ApiClient:
         # find difference to get device
         try:
             for attempt in Retrying(retry=retry_if_exception_type(StopIteration),
-                                    stop=stop_after_delay(60),
-                                    wait=wait_random_exponential(min=1)):
+                                    stop=stop_after_delay(self.timeout) if self.timeout else stop_never,
+                                    wait=wait_random_exponential()):
                 with attempt:
                     devices = self.get_devices_by_name_containing(name)
                     device = next(x for x in devices if x not in duplicate_devices)
@@ -533,7 +533,7 @@ class ApiClient:
         endpoint = '/api/getobjectstatus.htm'
         params = {
             'id': id,
-            'name': property,
+            'name': status,
             'show': 'nohtmlencode'
         }
         response = self._requests_get(endpoint, params)
