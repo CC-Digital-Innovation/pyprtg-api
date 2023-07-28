@@ -1,6 +1,6 @@
-# PRTG API
+# PyPRTG API
 
-Module to make it easier to communicate with PRTG instances. This module leverages PRTG's existing API and wraps it into an easy to understand Python class, PrtgApi.
+Python client module to communicate with PRTG instances. This module leverages PRTG's existing API and wraps it into an easy to understand Python class.
 
 ## Table of Contents
 
