@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyprtg-api"
-version = "0.0.16"
+version = "0.0.17"
 authors = [
     {name="Jonny Le", email="jonny.le@computacenter.com"},
 ]
@@ -18,3 +18,6 @@ license = {text="MIT"}
 classifiers = [
     "Programming Language :: Python :: 3"
 ]
+
+[project.urls]
+Repository = "https://github.com/CC-Digital-Innovation/pyprtg-api.git"
