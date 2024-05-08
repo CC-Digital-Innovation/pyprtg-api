@@ -242,16 +242,32 @@ class ApiClient:
         """
         return self._get_groups_base()
 
-    def get_groups_by_name_containing(self, name: str) -> List[Dict]:
+    def get_groups_by_group_id(self, group_id: Union[int, str]) -> List[Dict]:
+        """Get groups within the parent group
+
+        Args:
+            group_id (Union[int, str]): id of parent group
+
+        Returns:
+            list[dict]: groups and their details
+        """
+        params = {'id': group_id}
+        return self._get_groups_base(params)
+
+    def get_groups_by_name_containing(self, name: str, parent_id: Union[int, str, None] = None) -> List[Dict]:
         """Get groups by name
 
         Args:
             name (str): name of group
+            parent_id (int | str | None): optionally filter by parent group ID. Defaults to None.
 
         Returns:
             list[dict]: list of groups and their details
         """
-        params = {'filter_name': f'@sub({name})'}
+        params = {
+            'filter_name': f'@sub({name})',
+            'id': parent_id
+        }
         return self._get_groups_base(params)
 
     def get_group_by_name(self, name: str) -> Dict:
@@ -386,18 +402,6 @@ class ApiClient:
             list[dict]: all devices and their details
         """
         return self._get_devices_base()
-
-    def get_groups_by_group_id(self, group_id: Union[int, str]) -> List[Dict]:
-        """Get groups within the parent group
-
-        Args:
-            group_id (Union[int, str]): id of parent group
-
-        Returns:
-            list[dict]: groups and their details
-        """
-        params = {'id': group_id}
-        return self._get_groups_base(params)
 
     def get_devices_by_group_id(self, group_id: Union[int, str]) -> List[Dict]:
         """Get devices by parent group
