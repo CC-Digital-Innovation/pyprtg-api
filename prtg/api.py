@@ -616,6 +616,15 @@ class ApiClient:
         }
         self._requests_get(endpoint, params)
 
+    def rename_object(self, id: Union[int, str], name: str):
+        """Rename an object
+
+        Args:
+            id (Union[int, str]): id of object
+            name (str): new name
+        """
+        self._set_obj_property_base(id, 'name', name)
+
     def set_hostname(self, id: Union[int, str], host: Union[str, IPv4Address]):
         """Set hostname of object
 
