@@ -193,6 +193,20 @@ class ApiClient:
         except IndexError:
             raise ObjectNotFound('No probe with matching name.')
 
+    def get_probes_by_name_containing(self, name: str) -> List[Dict]:
+        """Get probes by name
+
+        Args:
+            name (str): name of group
+
+        Returns:
+            list[dict]: list of probes and their details
+        """
+        params = {
+            'filter_name': f'@sub({name})'
+        }
+        return self._get_probes_base(params)
+
     def get_probe(self, id: Union[int, str]) -> Dict:
         """Get one probe by id
 
