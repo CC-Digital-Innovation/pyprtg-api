@@ -1,8 +1,3 @@
-class Unauthorized(Exception):
-    """Raised when access to API failed from lacking or
-    having incorrect credentials
-    """
-
 class ObjectNotFound(Exception):
     """Raised when an object is expected but none are found.
     """

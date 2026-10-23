@@ -4,16 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyprtg-api"
-version = "0.0.10"
+version = "0.0.20"
 authors = [
     {name="Jonny Le", email="jonny.le@computacenter.com"},
 ]
-description = "API to communicate with PRTG instance."
+description = "Client API to communicate with PRTG instance."
 dependencies = [
-    "requests"
+    "certifi >= 2024.2.2, < 2025",
+    "requests >= 2.31.0, < 3",
+    "tenacity >= 8.2.2, < 9",
+    "urllib3 >= 2.2.1, < 3"
 ]
 readme = "README.md"
 license = {text="MIT"}
 classifiers = [
     "Programming Language :: Python :: 3"
 ]
+
+[project.urls]
+Repository = "https://github.com/CC-Digital-Innovation/pyprtg-api.git"
